@@ -13,12 +13,21 @@ async function bootstrap() {
   );
   app.use(cookieParser());
   app.setGlobalPrefix('api');
+
+  // Dynamically allow both your local machine and your production frontend
+  const allowedOrigins = [
+    'http://localhost:3001',
+    process.env.FRONTEND_URL, // 👈 Add this environment variable in Render
+  ].filter(Boolean);
+
   app.enableCors({
-    origin: 'http://localhost:3001',
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   });
+
+  // Render automatically assigns process.env.PORT, so this is perfect
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();
