@@ -9,9 +9,13 @@ import Redis from 'ioredis';
     {
       provide: REDIS_CLIENT,
       useFactory: (configService: ConfigService) => {
+
+const isProd = configService.get<string>('redis.nodeEnv') === 'production';
         return new Redis({
           host: configService.get<string>('redis.host'),
           port: configService.get<number>('redis.port'),
+          password: configService.get<string>('redis.password') || undefined, 
+          tls: isProd ? {} : undefined,
         });
       },
       inject: [ConfigService],
