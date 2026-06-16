@@ -1,0 +1,81 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import dbConfig from './config/db.config';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { UserModule } from './user/user.module';
+import { AuthModule } from './auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/guards/jwt-auth/jwt-auth.guard';
+import { RoleAuthGuard } from './auth/guards/role-auth/role-auth.guard';
+import { AssetModule } from './asset/asset.module';
+import subabaseConfig from './asset/config/subabase.config';
+import { FileTypeModule } from './file-type/file-type.module';
+import { ThumbnailModule } from './thumbnail/thumbnail.module';
+import { OrderModule } from './order/order.module';
+import orderConfig from './order/config/order.config';
+import { BullModule } from '@nestjs/bullmq';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-yet';
+import { RedisModule } from './redis/redis.module';
+import redisConfig from './redis/configs/redis.config';
+import KeyvRedis from '@keyv/redis';
+
+@Module({
+  imports: [
+    // 1. Load & Validate Environment Variables
+    ConfigModule.forRoot({
+      envFilePath: 'app.env',
+      isGlobal: true,
+      load: [dbConfig, subabaseConfig, orderConfig, redisConfig],
+      //      validationSchema: envValidationSchema,
+    }),
+
+    // 2. Async TypeORM Connection
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        ...config.get('database'), // This gets our 'database' registerAs object
+        autoLoadEntities: true, // Automatically finds your @Entity files
+      }),
+    }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.get<string>('redis.host'),
+          port: config.get<number>('redis.port'),
+        },
+      }),
+    }),
+
+CacheModule.registerAsync({
+  isGlobal: true,
+  inject: [ConfigService],
+  useFactory: async (config: ConfigService) => {
+    const host = config.get<string>('redis.host');
+    const port = config.get<number>('redis.port');
+
+    return {
+      stores: [
+        new KeyvRedis(`redis://${host}:${port}`)
+      ],
+      ttl: 300000, // 5 minutes in milliseconds
+    };
+  },
+}), 
+
+UserModule,
+    AuthModule,
+    AssetModule,
+    FileTypeModule,
+    ThumbnailModule,
+    RedisModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RoleAuthGuard },
+  ],
+})
+export class AppModule {}
