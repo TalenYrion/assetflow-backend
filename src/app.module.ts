@@ -40,48 +40,50 @@ import KeyvRedis from '@keyv/redis';
         autoLoadEntities: true, // Automatically finds your @Entity files
       }),
     }),
-BullModule.forRootAsync({
-  inject: [ConfigService],
-  useFactory: (config: ConfigService) => ({
-    connection: {
-      host: config.get<string>('redis.host'),
-      port: config.get<number>('redis.port'),
-      password: config.get<string>('redis.password') || undefined,
-      
-      // 1. CRITICAL: BullMQ will crash instantly on startup without this
-      maxRetriesPerRequest: null,
-      
-      // 2. REQUIRED: Upstash requires TLS (SSL) encryption when connecting over the public internet
-      tls: config.get<string>('redis.nodeEnv') === 'production' ? {} : undefined,
-    },
-  }),
-}),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.get<string>('redis.host'),
+          port: config.get<number>('redis.port'),
+          password: config.get<string>('redis.password') || undefined,
 
-CacheModule.registerAsync({
-  isGlobal: true,
-  inject: [ConfigService],
-  useFactory: async (config: ConfigService) => {
-    const host = config.get<string>('redis.host');
-    const port = config.get<number>('redis.port');
-    // 1. Correctly store the password in a variable
-    const password = config.get<string>('redis.password'); 
+          // 1. CRITICAL: BullMQ will crash instantly on startup without this
+          maxRetriesPerRequest: null,
 
-    // 2. Build the connection URI dynamically based on whether a password exists
-    const redisUri = password 
-      ? `redis://:${password}@${host}:${port}` 
-      : `redis://${host}:${port}`;
+          // 2. REQUIRED: Upstash requires TLS (SSL) encryption when connecting over the public internet
+          tls:
+            config.get<string>('redis.nodeEnv') === 'production'
+              ? {}
+              : undefined,
+        },
+      }),
+    }),
 
-    return {
-      stores: [
-        // 3. Pass the dynamic URI into KeyvRedis
-        new KeyvRedis(redisUri)
-      ],
-      ttl: 300000, // 5 minutes in milliseconds
-    };
-  },
-}),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => {
+        const host = config.get<string>('redis.host');
+        const port = config.get<number>('redis.port');
+        const password = config.get<string>('redis.password');
 
-UserModule,
+        // 1. Dynamically select 'rediss' for TLS in production
+        const isProd = config.get<string>('redis.nodeEnv') === 'production';
+        const protocol = isProd ? 'rediss' : 'redis';
+
+        // 2. Build the connection URI using the dynamic protocol
+        const redisUri = password
+          ? `${protocol}://:${password}@${host}:${port}`
+          : `${protocol}://${host}:${port}`;
+
+        return {
+          stores: [new KeyvRedis(redisUri)],
+          ttl: 300000, // 5 minutes in milliseconds
+        };
+      },
+    }),
+    UserModule,
     AuthModule,
     AssetModule,
     FileTypeModule,
