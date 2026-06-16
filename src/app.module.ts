@@ -40,15 +40,22 @@ import KeyvRedis from '@keyv/redis';
         autoLoadEntities: true, // Automatically finds your @Entity files
       }),
     }),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('redis.host'),
-          port: config.get<number>('redis.port'),
-        },
-      }),
-    }),
+BullModule.forRootAsync({
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => ({
+    connection: {
+      host: config.get<string>('redis.host'),
+      port: config.get<number>('redis.port'),
+      password: config.get<string>('redis.password') || undefined,
+      
+      // 1. CRITICAL: BullMQ will crash instantly on startup without this
+      maxRetriesPerRequest: null,
+      
+      // 2. REQUIRED: Upstash requires TLS (SSL) encryption when connecting over the public internet
+      tls: config.get<string>('redis.nodeEnv') === 'production' ? {} : undefined,
+    },
+  }),
+}),
 
 CacheModule.registerAsync({
   isGlobal: true,
@@ -56,15 +63,23 @@ CacheModule.registerAsync({
   useFactory: async (config: ConfigService) => {
     const host = config.get<string>('redis.host');
     const port = config.get<number>('redis.port');
+    // 1. Correctly store the password in a variable
+    const password = config.get<string>('redis.password'); 
+
+    // 2. Build the connection URI dynamically based on whether a password exists
+    const redisUri = password 
+      ? `redis://:${password}@${host}:${port}` 
+      : `redis://${host}:${port}`;
 
     return {
       stores: [
-        new KeyvRedis(`redis://${host}:${port}`)
+        // 3. Pass the dynamic URI into KeyvRedis
+        new KeyvRedis(redisUri)
       ],
       ttl: 300000, // 5 minutes in milliseconds
     };
   },
-}), 
+}),
 
 UserModule,
     AuthModule,
