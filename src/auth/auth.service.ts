@@ -130,6 +130,6 @@ export class AuthService {
     console.log('google user: ', googleUser);
     const user = await this.userService.findByEmail(googleUser.email);
     if (user) return user;
-    await this.userService.createUser(googleUser);
+    return await this.userService.createUser(googleUser);
   }
 }
