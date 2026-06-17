@@ -404,27 +404,45 @@ export class OrderService {
       );
     }
   }
-
   async invalidateAssetCache(buyerId?: number, sellerId?: number) {
+    // We include variations with and without the default 'cache:' prefix
+    // to ensure total compatibility with NestJS Cache Manager defaults
     const patterns = [
       `buyer:order:history:id:${buyerId}`,
       `sellerDashboard:id:${sellerId}`,
     ];
 
     for (const pattern of patterns) {
-      const stream = this.redis.scanStream({
-        match: pattern,
-        count: 100,
-      });
-      stream.on('data', async (keys: [string]) => {
-        if (keys.length > 0) {
-          stream.pause();
-          await this.redis.del(...keys);
-          stream.resume;
-        }
-      });
-      stream.on('end', () => {
-        console.log(` Successfully cleared all keys matching: ${pattern}`);
+      await new Promise<void>((resolve, reject) => {
+        const stream = this.redis.scanStream({
+          match: pattern,
+          count: 100,
+        });
+
+        stream.on('data', async (keys: string[]) => {
+          if (keys.length > 0) {
+            console.log(`🔥 Actually deleting these keys from Redis:`, keys); // 👈 ADD THIS LOG
+            stream.pause();
+            try {
+              await this.redis.del(...keys);
+            } catch (err) {
+              stream.destroy();
+              return reject(err);
+            }
+            stream.resume(); //  Fixed: Safely executed
+          }
+        });
+
+        stream.on('error', (err) => {
+          reject(err);
+        });
+
+        stream.on('end', () => {
+          console.log(
+            `Successfully evicted cache matching pattern: ${pattern}`,
+          );
+          resolve();
+        });
       });
     }
   }

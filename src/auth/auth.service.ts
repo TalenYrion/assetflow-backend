@@ -39,8 +39,18 @@ export class AuthService {
   }
 
   private clearCookies(res: Response) {
-    res.clearCookie('access-token', { path: '/' });
-    res.clearCookie('refresh-token', { path: '/' });
+    const isProd =
+      process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    res.clearCookie('access-token', {
+      path: '/',
+      secure: isProd,
+      sameSite: 'none',
+    });
+    res.clearCookie('refresh-token', {
+      path: '/',
+      secure: isProd,
+      sameSite: 'none',
+    });
   }
 
   async login(userId: number, res: Response) {
