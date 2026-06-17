@@ -40,7 +40,7 @@ export class AuthController {
   @Get('google/callback')
   async googleCallback(@Req() req, @Res() res: Response) {
     const response = await this.authService.login(req.user.id, res);
-    res.redirect(`http://localhost:3001/dashboard`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
   @Get('me')
   getMe(@CurrentUser() user: any) {

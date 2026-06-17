@@ -241,8 +241,8 @@ export class OrderService {
         assetId: assetId.toString(),
         sellerId: sellerId.toString(),
       },
-      success_url: 'http://localhost:3001/dashboard/buyer',
-      cancel_url: 'http://localhost:3001/browse',
+      success_url: `${process.env.FRONTEND_URL}/dashboard/buyer`,
+      cancel_url: `${process.env.FRONTEND_URL}/browse`,
     });
 
     await this.invalidateAssetCache(userId, sellerId);
@@ -267,8 +267,8 @@ export class OrderService {
 
     const accountLInk = await this.stripe.accountLinks.create({
       account: account.id,
-      refresh_url: 'http://localhost:3001/dashboard/settings',
-      return_url: 'http://localhost:3001/dashboard/settings',
+      refresh_url:  `${process.env.FRONTEND_URL}/dashboard/setting`,
+      return_url:   `${process.env.FRONTEND_URL}/dashboard/setting`,
       type: 'account_onboarding',
     });
 
@@ -385,8 +385,8 @@ export class OrderService {
       if (user.onboardingStatus !== 'ACTIVE') {
         const accountLink = await this.stripe.accountLinks.create({
           account: user.stripeAccountId,
-          refresh_url: 'http://localhost:3001/dashboard/settings',
-          return_url: 'http://localhost:3001/dashboard/settings',
+      refresh_url:  `${process.env.FRONTEND_URL}/dashboard/setting`,
+      return_url:   `${process.env.FRONTEND_URL}/dashboard/setting`,
           type: 'account_onboarding',
         });
 
