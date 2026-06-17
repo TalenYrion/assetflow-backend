@@ -19,18 +19,20 @@ export class AuthService {
   ) {}
 
   private setCookie(res: Response, accessToken: string, refreshToken: string) {
+    const isProd =
+      process.env.NODE_ENV === 'production' || !!process.env.RENDER;
     res.cookie('access-token', accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: 'none',
       path: '/',
       maxAge: 15 * 60 * 1000,
     });
 
     res.cookie('refresh-token', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: 'none',
       path: '/',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -48,7 +50,7 @@ export class AuthService {
     this.setCookie(res, accessToken, refreshToken);
     return {
       id: userId,
-      accessToken
+      accessToken,
     };
   }
 
@@ -84,8 +86,8 @@ export class AuthService {
 
   async refreshToken(userId: number, res: Response) {
     const { accessToken, refreshToken } = await this.generateToken(userId);
-const hashedRefreshToken = await argon2.hash(refreshToken);
-  await this.userService.updateRefresHToken(userId, hashedRefreshToken);
+    const hashedRefreshToken = await argon2.hash(refreshToken);
+    await this.userService.updateRefresHToken(userId, hashedRefreshToken);
     this.setCookie(res, accessToken, refreshToken);
     return {
       id: userId,
