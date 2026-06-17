@@ -23,43 +23,46 @@ import redisConfig from './redis/configs/redis.config';
 import KeyvRedis from '@keyv/redis';
 
 @Module({
-  imports: [
+imports: [
     // 1. Load & Validate Environment Variables
     ConfigModule.forRoot({
       envFilePath: 'app.env',
+      // 👈 CRITICAL: Stops your local app.env from overriding production parameters on Render
+      ignoreEnvFile: process.env.NODE_ENV === 'production' || !!process.env.RENDER, 
       isGlobal: true,
       load: [dbConfig, subabaseConfig, orderConfig, redisConfig],
-      //      validationSchema: envValidationSchema,
     }),
 
     // 2. Async TypeORM Connection
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        ...config.get('database'), // This gets our 'database' registerAs object
-        autoLoadEntities: true, // Automatically finds your @Entity files
+        ...config.get('database'),
+        autoLoadEntities: true,
       }),
     }),
+
+    // 3. Robust BullMQ Config
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('redis.host'),
-          port: config.get<number>('redis.port'),
-          password: config.get<string>('redis.password') || undefined,
+      useFactory: (config: ConfigService) => {
+        // Fallback checks to ensure production triggers correctly on Render
+        const isProd = config.get<string>('redis.nodeEnv') === 'production' || !!process.env.RENDER;
 
-          // 1. CRITICAL: BullMQ will crash instantly on startup without this
-          maxRetriesPerRequest: null,
-
-          // 2. REQUIRED: Upstash requires TLS (SSL) encryption when connecting over the public internet
-          tls:
-            config.get<string>('redis.nodeEnv') === 'production'
-              ? {}
-              : undefined,
-        },
-      }),
+        return {
+          connection: {
+            host: config.get<string>('redis.host'),
+            port: config.get<number>('redis.port'),
+            password: config.get<string>('redis.password') || undefined,
+            maxRetriesPerRequest: null,
+            // 👈 Explicitly configure TLS safely for production
+            tls: isProd ? { rejectUnauthorized: false } : undefined, 
+          },
+        };
+      },
     }),
 
+    // 4. Robust CacheModule Config
     CacheModule.registerAsync({
       isGlobal: true,
       inject: [ConfigService],
@@ -68,18 +71,17 @@ import KeyvRedis from '@keyv/redis';
         const port = config.get<number>('redis.port');
         const password = config.get<string>('redis.password');
 
-        // 1. Dynamically select 'rediss' for TLS in production
-        const isProd = config.get<string>('redis.nodeEnv') === 'production';
+        // Fallback checks to ensure rediss:// runs on Render
+        const isProd = config.get<string>('redis.nodeEnv') === 'production' || !!process.env.RENDER;
         const protocol = isProd ? 'rediss' : 'redis';
 
-        // 2. Build the connection URI using the dynamic protocol
         const redisUri = password
           ? `${protocol}://:${password}@${host}:${port}`
           : `${protocol}://${host}:${port}`;
 
         return {
           stores: [new KeyvRedis(redisUri)],
-          ttl: 300000, // 5 minutes in milliseconds
+          ttl: 300000, 
         };
       },
     }),
@@ -90,6 +92,7 @@ import KeyvRedis from '@keyv/redis';
     ThumbnailModule,
     RedisModule,
   ],
+
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RoleAuthGuard },
