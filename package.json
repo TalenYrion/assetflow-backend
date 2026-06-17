@@ -24,6 +24,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@keyv/redis": "^5.1.6",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/cache-manager": "^3.1.2",

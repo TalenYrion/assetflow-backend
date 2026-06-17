@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import Ffmpeg from 'fluent-ffmpeg';
+import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg'; // 👈 1. Add this import
 import sharp from 'sharp';
 import { Thumbnail } from 'src/entity/thumbnail.entity';
 import { Readable } from 'stream';
@@ -14,6 +15,8 @@ import { Repository } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+Ffmpeg.setFfmpegPath(ffmpegPath);
 
 @Injectable()
 export class ThumbnailService {
