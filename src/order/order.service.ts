@@ -396,7 +396,6 @@ export class OrderService {
     if (!user) {
       throw new NotFoundException('User profile not found');
     }
-    console.log('currentUser: ', user);
 
     if (!user.stripeAccountId) {
       throw new BadRequestException(

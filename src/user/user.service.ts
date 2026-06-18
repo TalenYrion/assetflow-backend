@@ -94,10 +94,22 @@ export class UserService {
   }
 
   async getProfile(userId: number) {
-    console.log('userId: ', userId);
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'firstName','lastName', 'email', 'avatarUrl','role', 'stripeAccountId', 'stripeAccountId', 'onboardingStatus','updatedAt', 'bio','updatedAt' ],
+      select: [
+        'id',
+        'firstName',
+        'lastName',
+        'email',
+        'avatarUrl',
+        'role',
+        'stripeAccountId',
+        'stripeAccountId',
+        'onboardingStatus',
+        'updatedAt',
+        'bio',
+        'updatedAt',
+      ],
     });
 
     if (!user) throw new BadRequestException('invalide credentials');
@@ -107,7 +119,15 @@ export class UserService {
   async findOne(userId: number) {
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'role', 'avatarUrl','email', 'firstName', 'lastName', 'refreshToken'],
+      select: [
+        'id',
+        'role',
+        'avatarUrl',
+        'email',
+        'firstName',
+        'lastName',
+        'refreshToken',
+      ],
     });
     if (!user) throw new BadRequestException('invalide credentials');
 
@@ -129,7 +149,11 @@ export class UserService {
 
     return this.userRepository.update({ id: userId }, { refreshToken: null });
   }
-async updateProfile(userId: number, updateDto: UpdateUseDto, file?: Express.Multer.File) {
+  async updateProfile(
+    userId: number,
+    updateDto: UpdateUseDto,
+    file?: Express.Multer.File,
+  ) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User workspace context not found');
 
@@ -142,14 +166,17 @@ async updateProfile(userId: number, updateDto: UpdateUseDto, file?: Express.Mult
     if (file) {
       const bucket = this.configService.get('supabase.userProfileBucket');
       const filePath = `profile-${user.id}/${Date.now()}-${file.originalname}`;
-      
+
       const { error } = await this.supabase.storage
         .from(bucket)
         .upload(filePath, file.buffer, { contentType: file.mimetype });
-        
-      if (error) throw new BadRequestException(`Avatar upload failed: ${error.message}`);
-      
-      const { data: { publicUrl } } = this.supabase.storage.from(bucket).getPublicUrl(filePath);
+
+      if (error)
+        throw new BadRequestException(`Avatar upload failed: ${error.message}`);
+
+      const {
+        data: { publicUrl },
+      } = this.supabase.storage.from(bucket).getPublicUrl(filePath);
       user.avatarUrl = publicUrl;
     }
 
@@ -165,14 +192,22 @@ async updateProfile(userId: number, updateDto: UpdateUseDto, file?: Express.Mult
     if (!user) throw new NotFoundException('User not found');
 
     // 2. Validate current password match
-    const isPasswordValid = await argon2.verify(user.password, dto.currentPassword);
+    const isPasswordValid = await argon2.verify(
+      user.password,
+      dto.currentPassword,
+    );
     if (!isPasswordValid) {
-      throw new BadRequestException('The current password provided is incorrect');
+      throw new BadRequestException(
+        'The current password provided is incorrect',
+      );
     }
 
     // 3. Hash and manually patch the new credential
     const hashedNewPassword = await argon2.hash(dto.newPassword);
-    await this.userRepository.update({ id: userId }, { password: hashedNewPassword });
+    await this.userRepository.update(
+      { id: userId },
+      { password: hashedNewPassword },
+    );
 
     return { message: 'Password updated successfully' };
   }

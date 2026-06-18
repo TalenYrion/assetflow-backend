@@ -21,7 +21,6 @@ export class OauthStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   validate(accessToken: string, refreshToken: string, profile: any) {
-    console.log('profile: ', profile);
     const user = this.authService.validateGoogleUser({
       email: profile.emails[0].value,
       firstName: profile.name.givenName,

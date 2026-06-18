@@ -41,8 +41,8 @@ export class AssetService {
     @InjectQueue('thumbnail-process') private thumbnailQueue: Queue,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
-    @InjectRepository(User) private userRepo : Repository<User>,
-    @InjectRepository(Order) private orderRepo: Repository<Order>
+    @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(Order) private orderRepo: Repository<Order>,
   ) {
     const url = this.configService.get('supabase.url');
     const key = this.configService.get('supabase.key');
@@ -194,13 +194,13 @@ export class AssetService {
     });
     if (!asset) throw new BadRequestException('asset not found');
 
-    asset.status = AssetStatus.ARCHIVED
+    asset.status = AssetStatus.ARCHIVED;
 
-    await this.AssetRepo.save(asset)
+    await this.AssetRepo.save(asset);
 
     await this.invalidateAssetCache(userId, id);
- 
-/*    console.log('id: ', id);
+
+    /*    console.log('id: ', id);
     const asset = await this.AssetRepo.findOne({
       where: { id },
       relations: ['thumbnail'],
@@ -221,7 +221,6 @@ export class AssetService {
 
   async updateEntity(updateAssetDto: UpdateAssetDto, id: number) {
     await this.AssetRepo.update({ id }, updateAssetDto);
-    
   }
 
   async updateAssetFile(
@@ -266,8 +265,6 @@ export class AssetService {
     });
     if (!asset || !asset.thumbnail)
       throw new BadRequestException('file not found');
-    console.log('asset: ', asset);
-    console.log('thumbnailId: ', asset.thumbnail?.id);
     const filePath = asset.storagePath;
     const thumbId = asset.thumbnail?.id;
 
@@ -294,7 +291,9 @@ export class AssetService {
     const [data, total] = await this.AssetRepo.findAndCount({
       where: {
         creator: { id: id },
-        status: isOwner ? In([AssetStatus.DRAFT, AssetStatus.PUBLISHED, AssetStatus.BANNED]): AssetStatus.PUBLISHED,
+        status: isOwner
+          ? In([AssetStatus.DRAFT, AssetStatus.PUBLISHED, AssetStatus.BANNED])
+          : AssetStatus.PUBLISHED,
       },
       relations: ['thumbnail'],
       take: limit,
@@ -344,7 +343,7 @@ export class AssetService {
         'This seller is not onboarded to receive payments yet.',
       );
     }
-    await this.invalidateAssetCache(userId, assetId)
+    await this.invalidateAssetCache(userId, assetId);
     return await this.orderService.createCheckoutSession(
       userId,
       assetId,
@@ -396,59 +395,62 @@ export class AssetService {
     await this.invalidateAssetCache(userId, assetId);
   }
 
+  async getPublicCreatorProfile(
+    creatorId: number,
+    page: number,
+    limit: number,
+  ) {
+    const cacheKey = `Profile:${creatorId}:page=${page}:limit=${limit}`;
+    const cachedData = await this.cacheManager.get(cacheKey);
+    if (cachedData) return cachedData;
 
-async getPublicCreatorProfile(creatorId: number, page: number, limit: number) {
-  const cacheKey = `Profile:${creatorId}:page=${page}:limit=${limit}`;
-  const cachedData = await this.cacheManager.get(cacheKey);
-  if (cachedData) return cachedData;
+    const skip = (page - 1) * limit;
 
-  const skip = (page - 1) * limit;
+    const creator = await this.userRepo.findOne({
+      where: { id: creatorId },
+      select: ['id', 'firstName', 'lastName', 'avatarUrl', 'createdAt'],
+    });
 
-  const creator = await this.userRepo.findOne({
-    where: { id: creatorId },
-    select: ['id', 'firstName', 'lastName', 'avatarUrl', 'createdAt'],
-  });
+    if (!creator) throw new NotFoundException('Creator not found');
 
-  if (!creator) throw new NotFoundException('Creator not found');
+    // 💡 Use findAndCount to get the total number of items ignoring pagination bounds
+    const [assets, totalActiveAssets] = await this.AssetRepo.findAndCount({
+      where: { creator: { id: creatorId }, status: AssetStatus.PUBLISHED },
+      relations: ['thumbnail'],
+      take: limit,
+      skip: skip,
+      order: { createdAt: 'DESC' },
+    });
 
-  // 💡 Use findAndCount to get the total number of items ignoring pagination bounds
-  const [assets, totalActiveAssets] = await this.AssetRepo.findAndCount({
-    where: { creator: { id: creatorId }, status: AssetStatus.PUBLISHED },
-    relations: ['thumbnail'],
-    take: limit,
-    skip: skip,
-    order: { createdAt: 'DESC' }
-  });
+    const totalSalesCount = await this.orderRepo.count({
+      where: { seller: { id: creatorId } },
+    });
 
-  const totalSalesCount = await this.orderRepo.count({
-    where: { seller: { id: creatorId } },
-  });
+    const result = {
+      creator,
+      metrics: {
+        activeAssetsCount: totalActiveAssets, // 💡 Displays true overall count accurately
+        totalSalesCount,
+      },
+      assets: assets.map((asset) => ({
+        id: asset.id,
+        title: asset.title,
+        description: asset.description,
+        price: asset.price,
+        fileExtension: asset.fileExtension,
+        thumbnailUrl: asset.thumbnail?.url || null,
+      })),
+      pagination: {
+        currentPage: page,
+        limit,
+        totalItems: totalActiveAssets,
+        totalPages: Math.ceil(totalActiveAssets / limit),
+      },
+    };
 
-  const result = {
-    creator,
-    metrics: {
-      activeAssetsCount: totalActiveAssets, // 💡 Displays true overall count accurately
-      totalSalesCount,
-    },
-    assets: assets.map((asset) => ({
-      id: asset.id,
-      title: asset.title,
-      description: asset.description,
-      price: asset.price,
-      fileExtension: asset.fileExtension,
-      thumbnailUrl: asset.thumbnail?.url || null,
-    })),
-    pagination: {
-      currentPage: page,
-      limit,
-      totalItems: totalActiveAssets,
-      totalPages: Math.ceil(totalActiveAssets / limit),
-    }
-  };
-
-  await this.cacheManager.set(cacheKey, result, 300000); // Cache for 5 mins
-  return result;
-}
+    await this.cacheManager.set(cacheKey, result, 300000); // Cache for 5 mins
+    return result;
+  }
 
   async invalidateAssetCache(userId: number, assetId?: number) {
     // We include variations with and without the default 'cache:' prefix
@@ -458,7 +460,7 @@ async getPublicCreatorProfile(creatorId: number, page: number, limit: number) {
       `*asset/mine*`, // Catches /api/asset/mine with or without query params
       `*asset/user/${userId}*`, // Catches user-specific asset listings
       `*assets:*`,
-      `Profile:${userId}:*`
+      `Profile:${userId}:*`,
     ];
 
     if (assetId) {
