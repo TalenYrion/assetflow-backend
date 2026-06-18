@@ -54,13 +54,13 @@ export class OrderService {
     });
   }
 
-  async handleWebHook(rawBody: Buffer, sig: string) {
+  async handleStandardWebhook(rawBody: Buffer, sig: string) {
     let event: ReturnType<
       InstanceType<typeof Stripe>['webhooks']['constructEvent']
     >;
 
     const endpointSecret = this.configService.get<string>(
-      'stripe.webhookSecret',
+      'stripe.webhookSecretStandard',
     );
 
     if (!endpointSecret) {
@@ -140,25 +140,6 @@ export class OrderService {
         `Successfully saved Order to DB for User ${buyerId} buying Asset ${assetId}`,
       );
     }
-    if (event.type === 'account.updated') {
-      const account = event.data.object as Extract<
-        ReturnType<
-          InstanceType<typeof Stripe>['webhooks']['constructEvent']
-        >['data']['object'],
-        { object: 'account' }
-      >;
-
-      if (account.charges_enabled || account.details_submitted) {
-        await this.userRepo.update(
-          { stripeAccountId: account.id },
-          { onboardingStatus: OnboardingStatus.ACTIVE },
-        );
-        console.log(
-          `Seller account ${account.id} is officially ready to process payments!`,
-        );
-      }
-    }
-
     if (event.type === 'charge.refunded') {
       const charge = event.data.object as Extract<
         ReturnType<
@@ -187,6 +168,49 @@ export class OrderService {
       console.log(
         `[Refund Success] Order #${order.id} has been marked as REFUNDED.`,
       );
+    }
+
+    return { recieved: true };
+  }
+
+  async handleConnectWebhook(rawBody: Buffer, sig: string) {
+    let event: ReturnType<
+      InstanceType<typeof Stripe>['webhooks']['constructEvent']
+    >;
+
+    const endpointSecret = this.configService.get<string>(
+      'stripe.webhookSecretConnect',
+    );
+
+    if (!endpointSecret) {
+      throw new BadRequestException(
+        'Webhook secret is missing in configuration',
+      );
+    }
+
+    try {
+      event = this.stripe.webhooks.constructEvent(rawBody, sig, endpointSecret);
+    } catch (err) {
+      throw new BadRequestException(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'account.updated') {
+      const account = event.data.object as Extract<
+        ReturnType<
+          InstanceType<typeof Stripe>['webhooks']['constructEvent']
+        >['data']['object'],
+        { object: 'account' }
+      >;
+
+      if (account.charges_enabled || account.details_submitted) {
+        await this.userRepo.update(
+          { stripeAccountId: account.id },
+          { onboardingStatus: OnboardingStatus.ACTIVE },
+        );
+        console.log(
+          `Seller account ${account.id} is officially ready to process payments!`,
+        );
+      }
     }
 
     return { recieved: true };
@@ -246,7 +270,6 @@ export class OrderService {
     });
 
     await this.invalidateAssetCache(userId, sellerId);
-    console.log('checkout: ', session.url);
 
     return { url: session.url }; // Return the checkout page URL
   }
@@ -267,8 +290,8 @@ export class OrderService {
 
     const accountLInk = await this.stripe.accountLinks.create({
       account: account.id,
-      refresh_url:  `${process.env.FRONTEND_URL}/dashboard/setting`,
-      return_url:   `${process.env.FRONTEND_URL}/dashboard/setting`,
+      refresh_url: `${process.env.FRONTEND_URL}/dashboard/settings`,
+      return_url: `${process.env.FRONTEND_URL}/dashboard/settings`,
       type: 'account_onboarding',
     });
 
@@ -385,8 +408,8 @@ export class OrderService {
       if (user.onboardingStatus !== 'ACTIVE') {
         const accountLink = await this.stripe.accountLinks.create({
           account: user.stripeAccountId,
-      refresh_url:  `${process.env.FRONTEND_URL}/dashboard/setting`,
-      return_url:   `${process.env.FRONTEND_URL}/dashboard/setting`,
+          refresh_url: `${process.env.FRONTEND_URL}/dashboard/settings`,
+          return_url: `${process.env.FRONTEND_URL}/dashboard/settings`,
           type: 'account_onboarding',
         });
 

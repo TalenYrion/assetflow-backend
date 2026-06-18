@@ -20,8 +20,8 @@ export class OrderController {
   constructor(private orderService: OrderService) {}
 
   @Public()
-  @Post('webhook')
-  async webhook(
+  @Post('webhook/standard')
+  async standardWebhook(
     @Req() req: RawBodyRequest<Request>,
     @Headers('stripe-signature') signature: string,
   ) {
@@ -32,8 +32,23 @@ export class OrderController {
       throw new BadRequestException('Missing raw request body');
     }
 
-    // Use the raw body buffer we enabled in main.ts
-    return this.orderService.handleWebHook(req.rawBody, signature);
+    return this.orderService.handleStandardWebhook(req.rawBody, signature);
+  }
+
+  @Public()
+  @Post('webhook/connect')
+  async connectWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('stripe-signature') signature: string,
+  ) {
+    if (!signature) {
+      throw new BadRequestException('Missing stripe-signature header');
+    }
+    if (!req.rawBody) {
+      throw new BadRequestException('Missing raw request body');
+    }
+
+    return this.orderService.handleConnectWebhook(req.rawBody, signature);
   }
 
   @Roles(Role.BUYER)

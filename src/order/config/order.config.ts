@@ -3,6 +3,7 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('stripe', () => {
   return {
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
-    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    webhookSecretConnect: process.env.STRIPE_WEBHOOK_SECRET_CONNECT,
+    webhookSecretStandard: process.env.STRIPE_WEBHOOK_SECRET_STANDARD,
   };
 });
