@@ -10,18 +10,23 @@ import {
   Query,
   Req,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { AssetService } from './asset.service';
 import { CreateAssetDto } from './dto/createAsset.dto';
 import { CreateUserDto } from 'src/user/dto/createUser.dto';
-import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { ParseIdPipe } from './pipe/parseIdPipe';
 import { AssetQueryDto } from './dto/assetQuery.dto';
 import { Roles } from 'src/auth/decorators/role.decorator';
 import { Role } from 'src/user/enums/role.enum';
 import { CacheInterceptor } from '@nestjs/cache-manager';
 import { Public } from 'src/auth/decorators/public.decorator';
+import { UpdateAssetDto } from './dto/updateAsset.dto';
 
 @Controller('asset')
 export class AssetController {
@@ -29,16 +34,37 @@ export class AssetController {
 
   @Roles(Role.SELLER)
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'file', maxCount: 1 },
+      { name: 'thumbnailFile', maxCount: 1 }, // Optional cover image
+    ]),
+  )
   createAsset(
     @Body() createAssetDto: CreateAssetDto,
     @Req() req,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles()
+    files: {
+      file?: Express.Multer.File[];
+      thumbnailFile?: Express.Multer.File[];
+    },
   ) {
-    if (!file) throw new BadRequestException('Asset file is required');
-    return this.assetService.createAsset(createAssetDto, req.user.id, file);
-  }
+    // Safely extract the files from the object arrays
+    const assetFile = files?.file?.[0];
+    const thumbnailFile = files?.thumbnailFile?.[0];
 
+    if (!assetFile) {
+      throw new BadRequestException('Asset file is required');
+    }
+
+    // Pass both files to your service (you will need to update the service signature)
+    return this.assetService.createAsset(
+      createAssetDto,
+      req.user.id,
+      assetFile,
+      thumbnailFile,
+    );
+  }
   @Roles(Role.SELLER)
   @Patch('status/:id')
   async publishAsset(@Param('id', ParseIdPipe) id: number, @Req() req) {
@@ -46,7 +72,10 @@ export class AssetController {
   }
 
   @Get('profile/:id')
-   getProfile(@Param('id', ParseIdPipe) id: number, @Query() query: AssetQueryDto, ) {
+  getProfile(
+    @Param('id', ParseIdPipe) id: number,
+    @Query() query: AssetQueryDto,
+  ) {
     const pageStr = query.page !== undefined ? String(query.page) : '1';
     const limitStr = query.limit !== undefined ? String(query.limit) : '10';
     const pageNum = Math.max(1, parseInt(pageStr, 10));
@@ -57,14 +86,8 @@ export class AssetController {
     if (!allowedLimits.includes(limitNum)) {
       limitNum = 10;
     }
-    return this.assetService.getPublicCreatorProfile(
-	    id,
-      pageNum,
-      limitNum,
-    );
+    return this.assetService.getPublicCreatorProfile(id, pageNum, limitNum);
   }
-
-
 
   @Roles(Role.SELLER)
   @UseInterceptors(CacheInterceptor)
@@ -103,14 +126,33 @@ export class AssetController {
 
   @Roles(Role.SELLER)
   @Patch(':id')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'file', maxCount: 1 },
+      { name: 'thumbnailFile', maxCount: 1 },
+    ]),
+  )
   updateAsset(
     @Param('id', ParseIdPipe) id: number,
     @Req() req,
-    @Body() createAssetDto: CreateAssetDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @Body() updateAssetDto: UpdateAssetDto,
+    @UploadedFiles()
+    files: {
+      file?: Express.Multer.File[];
+      thumbnailFile?: Express.Multer.File[];
+    },
   ) {
-    return this.assetService.updateAsset(id, createAssetDto, req.user.id, file);
+    const file = files?.file?.[0];
+    const thumbnailFile = files?.thumbnailFile?.[0];
+
+    // Pass the thumbnailFile down into the service layer
+    return this.assetService.updateAsset(
+      id,
+      updateAssetDto,
+      req.user.id,
+      file,
+      thumbnailFile,
+    );
   }
 
   @Public()
@@ -159,5 +201,4 @@ export class AssetController {
   async checkout(@Body('assetId') assetId: number, @Req() req) {
     return this.assetService.createCheckoutSessionAsset(req.user.id, assetId);
   }
-
 }

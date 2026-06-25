@@ -57,6 +57,7 @@ export class AssetService {
     createAssetDto: CreateAssetDto,
     userId: number,
     file: Express.Multer.File,
+    thumbnailFile?: Express.Multer.File, // <-- Added optional thumbnail receiver
   ) {
     const { mimeType, extension, filePath } = await this.uploadFile(
       file,
@@ -78,12 +79,14 @@ export class AssetService {
     await this.AssetRepo.save(asset);
 
     if (file.mimetype.startsWith('video/')) {
+      // Leaves video thumbnail generation alone
       await this.thumbnailQueue.add('generate-video-thumb', {
         assetId: asset.id,
         storagePath: filePath,
         userId,
       });
     } else if (file.mimetype.startsWith('image/')) {
+      // Leaves image thumbnail generation alone
       const thumbnail = await this.thumbnailService.createThumbnail(
         file,
         userId,
@@ -91,23 +94,41 @@ export class AssetService {
       asset.thumbnail = thumbnail;
       await this.AssetRepo.save(asset);
     } else {
-      const iconUrl = await this.thumbnailService.getFallbackIconsUrl(
-        file.mimetype,
-      );
-      const fallbackThumbnail =
-        await this.thumbnailService.createStaticThumbnail(iconUrl);
-      asset.thumbnail = fallbackThumbnail;
+      // ==========================================
+      // NEW HYBRID THUMBNAIL WORKFLOW
+      // For ZIP, PDF, DOCX, etc.
+      // ==========================================
+      let finalThumbnail;
+
+      if (thumbnailFile) {
+        // Path 1: User uploaded a custom cover image
+        // Sharp resizes, crops, and optimizes to 16:9 WebP
+        finalThumbnail = await this.thumbnailService.processCustomThumbnail(
+          thumbnailFile,
+          userId,
+        );
+      } else {
+        // Path 2: User left it blank
+        // Pass title and extension to dynamic SVG generator -> Convert to 16:9 WebP
+        finalThumbnail = await this.thumbnailService.generateDynamicThumbnail(
+          createAssetDto.title, // or whatever the title property is named in your DTO
+          extension,
+          userId,
+        );
+      }
+
+      asset.thumbnail = finalThumbnail;
       await this.AssetRepo.save(asset);
     }
 
     await this.fileTypeService.createFileType(extension, mimeType);
     await this.invalidateAssetCache(userId);
+
     return {
       message: 'Asset uploaded successfully. Thumbnail is being processed.',
       asset,
     };
   }
-
   async uploadFile(file: Express.Multer.File, userId: number) {
     const extension = file.originalname.split('.').pop()?.toLowerCase();
     const mimeType = file.mimetype;
@@ -224,30 +245,47 @@ export class AssetService {
   }
 
   async updateAssetFile(
-    file: Express.Multer.File,
+    file: Express.Multer.File | undefined,
+    thumbnailFile: Express.Multer.File | undefined,
     oldFilePath: string,
     thumbId: number,
     id: number,
     userId: number,
+    title: string,
+    extension: string,
   ) {
-    await this.deleteFile(oldFilePath, thumbId);
-    const { mimeType, extension, filePath } = await this.uploadFile(
-      file,
-      userId,
-    );
+    let newFilePath = oldFilePath;
+    let newExtension = extension;
 
+    // Only handle primary file upload if a new file was actually provided
+    if (file) {
+      await this.deleteFile(oldFilePath, thumbId);
+      const {
+        mimeType,
+        extension: ext,
+        filePath,
+      } = await this.uploadFile(file, userId);
+      newFilePath = filePath;
+      newExtension = ext;
+    }
+
+    // Process the thumbnail using the new hybrid flow
     const thumbnail = await this.thumbnailService.updateThumbEntity(
       thumbId,
       file,
+      thumbnailFile,
+      title,
+      newExtension,
       userId,
       this.supabase,
     );
 
+    // Commit the new file and thumbnail relationships
     await this.AssetRepo.update(
       { id },
       {
-        fileExtension: extension,
-        storagePath: filePath,
+        fileExtension: newExtension,
+        storagePath: newFilePath,
         thumbnail: thumbnail ? { id: thumbnail.id } : undefined,
       },
     );
@@ -258,6 +296,7 @@ export class AssetService {
     updateAssetDto: UpdateAssetDto,
     userId: number,
     file?: Express.Multer.File,
+    thumbnailFile?: Express.Multer.File,
   ) {
     const asset = await this.AssetRepo.findOne({
       where: { id },
@@ -265,18 +304,32 @@ export class AssetService {
     });
     if (!asset || !asset.thumbnail)
       throw new BadRequestException('file not found');
+
     const filePath = asset.storagePath;
     const thumbId = asset.thumbnail?.id;
 
-    if (file) {
-      await this.updateAssetFile(file, filePath, thumbId, id, userId);
+    // Derive the title (from DTO if updated, otherwise fallback to existing)
+    const title = updateAssetDto.title || asset.title || 'ASSET';
+    const extension = asset.fileExtension;
+
+    // Only run file/thumbnail updates if one of the files was actually provided
+    if (file || thumbnailFile) {
+      await this.updateAssetFile(
+        file,
+        thumbnailFile,
+        filePath,
+        thumbId,
+        id,
+        userId,
+        title,
+        extension,
+      );
     }
 
     await this.updateEntity(updateAssetDto, id);
     await this.invalidateAssetCache(userId, id);
     return this.AssetRepo.findOne({ where: { id }, relations: ['thumbnail'] });
   }
-
   async findByCreator(
     id: number,
     isOwner: boolean,

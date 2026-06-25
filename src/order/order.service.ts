@@ -184,7 +184,7 @@ export class OrderService {
 
     if (!endpointSecret) {
       throw new BadRequestException(
-        'Webhook secret is missing in configuration',
+        ' Connect Webhook secret is missing in configuration',
       );
     }
 

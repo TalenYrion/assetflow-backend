@@ -139,51 +139,63 @@ export class ThumbnailService {
 
   async updateThumbEntity(
     id: number,
-    file: Express.Multer.File,
+    file: Express.Multer.File | undefined,
+    thumbnailFile: Express.Multer.File | undefined,
+    title: string,
+    extension: string,
     userId: number,
     supabase: SupabaseClient,
   ) {
-    const isVideo = file.mimetype.startsWith('video/');
-    const isImage = file.mimetype.startsWith('image/');
-
-    let thumnUrl: string;
-    let thumbPath: string;
-
-    // 1. Fetch the existing thumbnail so we can clean up old files in Supabase storage
     const oldThumbnail = await this.thumbnailRepo.findOne({ where: { id } });
-    if (!oldThumbnail) {
+    if (!oldThumbnail)
       throw new NotFoundException(`Thumbnail with ID ${id} not found`);
-    }
 
-    if (isImage || isVideo) {
-      // Handle dynamic generation for images/videos
-      let imageBuffer = file.buffer;
-      if (isVideo) {
-        imageBuffer = await this.extractVideoFrame(file.buffer);
+    let thumnUrl: string = oldThumbnail.url;
+    let thumbPath: string = oldThumbnail.storagePath;
+
+    // 1. Determine which thumbnail to generate based on hybrid priority
+    if (thumbnailFile) {
+      // User explicitly uploaded a new cover image
+      const webpBuffer = await this.generateCustomThumbBuffer(thumbnailFile);
+      const result = await this.uploadToBucket(webpBuffer, userId);
+      thumnUrl = result.thumnUrl;
+      thumbPath = result.thumbPath;
+    } else if (file) {
+      // User uploaded a new file without a cover image
+      if (file.mimetype.startsWith('video/')) {
+        const imageBuffer = await this.extractVideoFrame(file.buffer);
+        const result = await this.createThumbFile(imageBuffer, userId); // Or reuse uploadToBucket if appropriate
+        thumnUrl = result.thumnUrl;
+        thumbPath = result.thumbPath;
+      } else if (file.mimetype.startsWith('image/')) {
+        const result = await this.createThumbFile(file.buffer, userId);
+        thumnUrl = result.thumnUrl;
+        thumbPath = result.thumbPath;
+      } else {
+        // Fallback to data-driven SVG banner
+        const webpBuffer = await this.generateDynamicThumbBuffer(
+          title,
+          extension,
+        );
+        const result = await this.uploadToBucket(webpBuffer, userId);
+        thumnUrl = result.thumnUrl;
+        thumbPath = result.thumbPath;
       }
-
-      // Delete the old custom file from Supabase bucket to save space (skip if it was a static icon)
-      if (oldThumbnail.storagePath !== 'static-fallback') {
-        const bucket = this.configService.get('supabase.thumbBucket');
-        await supabase.storage.from(bucket).remove([oldThumbnail.storagePath]);
-      }
-
-      const thumbResult = await this.createThumbFile(imageBuffer, userId);
-      thumnUrl = thumbResult.thumnUrl;
-      thumbPath = thumbResult.thumbPath;
     } else {
-      // 2. If the user switched to a .zip/.pdf file, use your static fallback icons
-      if (oldThumbnail.storagePath !== 'static-fallback') {
-        const bucket = this.configService.get('supabase.thumbBucket');
-        await supabase.storage.from(bucket).remove([oldThumbnail.storagePath]);
-      }
-
-      // Map to your existing fallback helper
-      thumnUrl = this.getFallbackIconsUrl(file.mimetype);
-      thumbPath = 'static-fallback';
+      // No file or thumbnailFile uploaded, safely skip changes
+      return oldThumbnail;
     }
 
-    // 3. Commit the updated records to your database
+    // 2. Clean up old file from Supabase Bucket (if it changed)
+    if (
+      oldThumbnail.storagePath !== 'static-fallback' &&
+      oldThumbnail.storagePath !== thumbPath
+    ) {
+      const bucket = this.configService.get('supabase.thumbBucket');
+      await supabase.storage.from(bucket).remove([oldThumbnail.storagePath]);
+    }
+
+    // 3. Update existing DB Entity with the new paths
     await this.thumbnailRepo.update(
       { id },
       { url: thumnUrl, storagePath: thumbPath },
@@ -192,44 +204,85 @@ export class ThumbnailService {
     return this.thumbnailRepo.findOne({ where: { id } });
   }
 
-  getFallbackIconsUrl(mimeType: string): string {
-    const iconsBaseUrl =
-      'https://auffenstcauzqynjbmps.supabase.co/storage/v1/object/public/static-icons';
+  private async uploadToBucket(
+    buffer: Buffer,
+    userId: number,
+    contentType: string = 'image/webp',
+  ) {
+    const thumbPath = `user-${userId}/thumb-${Date.now()}.webp`;
+    const bucket = this.configService.get('supabase.thumbBucket');
 
-    if (mimeType === 'application/pdf') {
-      return `${iconsBaseUrl}/pdf-icon.svg`;
-    }
-    if (
-      mimeType === 'application/zip' ||
-      mimeType === 'application/x-zip-compressed'
-    ) {
-      return `${iconsBaseUrl}/zip-icon.svg`;
-    }
-    if (mimeType.startsWith('audio/')) {
-      return `${iconsBaseUrl}/audio-icon.svg`;
-    }
-    if (
-      mimeType ===
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ) {
-      return `${iconsBaseUrl}/word-icon.svg`; // Target extra type 1 (Word Docs)
-    }
-    if (
-      mimeType ===
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    ) {
-      return `${iconsBaseUrl}/excel-icon.svg`; // Target extra type 2 (Excel)
-    }
+    await this.supabase.storage
+      .from(bucket)
+      .upload(thumbPath, buffer, { contentType });
 
-    // Absolute fallback for anything else
-    return `${iconsBaseUrl}/others-icon.svg`;
+    const {
+      data: { publicUrl: thumnUrl },
+    } = this.supabase.storage.from(bucket).getPublicUrl(thumbPath);
+
+    return { thumnUrl, thumbPath };
   }
 
-  async createStaticThumbnail(url: string): Promise<Thumbnail> {
-    const thumbnail = this.thumbnailRepo.create({
-      url: url,
-      storagePath: 'static-fallback',
+  async generateCustomThumbBuffer(file: Express.Multer.File): Promise<Buffer> {
+    return sharp(file.buffer)
+      .resize({ width: 1280, height: 720, fit: 'cover' })
+      .webp({ quality: 80 })
+      .toBuffer();
+  }
+
+  async generateDynamicThumbBuffer(
+    title: string,
+    extension: string,
+  ): Promise<Buffer> {
+    const svgString = `
+      <svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="#1e293b" />
+        <text x="50%" y="45%" font-size="80" fill="#ffffff" font-family="Arial" text-anchor="middle" dominant-baseline="middle">
+          ${title}
+        </text>
+        <text x="50%" y="60%" font-size="40" fill="#94a3b8" font-family="Arial" text-anchor="middle" dominant-baseline="middle">
+          FILE EXTENSION: .${extension.toUpperCase()}
+        </text>
+      </svg>
+    `;
+    return sharp(Buffer.from(svgString))
+      .resize(1280, 720)
+      .webp({ quality: 80 })
+      .toBuffer();
+  }
+
+  async processCustomThumbnail(
+    file: Express.Multer.File,
+    userId: number,
+  ): Promise<Thumbnail> {
+    const webpBuffer = await this.generateCustomThumbBuffer(file);
+    const { thumnUrl, thumbPath } = await this.uploadToBucket(
+      webpBuffer,
+      userId,
+    );
+
+    const newThumbnail = this.thumbnailRepo.create({
+      url: thumnUrl,
+      storagePath: thumbPath,
     });
-    return await this.thumbnailRepo.save(thumbnail);
+    return await this.thumbnailRepo.save(newThumbnail);
+  }
+
+  async generateDynamicThumbnail(
+    title: string,
+    extension: string,
+    userId: number,
+  ): Promise<Thumbnail> {
+    const webpBuffer = await this.generateDynamicThumbBuffer(title, extension);
+    const { thumnUrl, thumbPath } = await this.uploadToBucket(
+      webpBuffer,
+      userId,
+    );
+
+    const newThumbnail = this.thumbnailRepo.create({
+      url: thumnUrl,
+      storagePath: thumbPath,
+    });
+    return await this.thumbnailRepo.save(newThumbnail);
   }
 }
