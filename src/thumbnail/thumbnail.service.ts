@@ -230,21 +230,53 @@ export class ThumbnailService {
       .toBuffer();
   }
 
-  async generateDynamicThumbBuffer(
+async generateDynamicThumbBuffer(
     title: string,
     extension: string,
   ): Promise<Buffer> {
+    // Generate a consistent but unique color scheme based on the title string
+    const hash1 = Math.abs(title.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)) % 360;
+    const hash2 = (hash1 + 45) % 360;
+    
     const svgString = `
       <svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg">
-        <rect width="100%" height="100%" fill="#1e293b" />
-        <text x="50%" y="45%" font-size="80" fill="#ffffff" font-family="Arial" text-anchor="middle" dominant-baseline="middle">
-          ${title}
-        </text>
-        <text x="50%" y="60%" font-size="40" fill="#94a3b8" font-family="Arial" text-anchor="middle" dominant-baseline="middle">
-          FILE EXTENSION: .${extension.toUpperCase()}
-        </text>
+        <defs>
+          <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="hsl(${hash1}, 80%, 15%)" />
+            <stop offset="100%" stop-color="hsl(${hash2}, 80%, 10%)" />
+          </linearGradient>
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="10" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#bg)" />
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Abstract Decorative Elements -->
+        <circle cx="15%" cy="20%" r="300" fill="white" opacity="0.02" />
+        <circle cx="85%" cy="80%" r="400" fill="black" opacity="0.1" />
+
+        <g transform="translate(640, 360)">
+          <rect x="-400" y="-100" width="800" height="200" rx="30" fill="black" opacity="0.3" />
+          <rect x="-400" y="-100" width="800" height="200" rx="30" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+          
+          <text y="-10" font-size="72" font-weight="900" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle" dominant-baseline="middle" filter="url(#glow)">
+            ${title.length > 22 ? title.substring(0, 22) + '...' : title}
+          </text>
+          
+          <rect x="-120" y="45" width="240" height="50" rx="25" fill="rgba(255,255,255,0.1)" />
+          <text y="70" font-size="24" font-weight="bold" fill="#38bdf8" font-family="monospace" text-anchor="middle" dominant-baseline="middle" letter-spacing="4">
+            .${extension.toUpperCase()}
+          </text>
+        </g>
       </svg>
     `;
+
     return sharp(Buffer.from(svgString))
       .resize(1280, 720)
       .webp({ quality: 80 })
