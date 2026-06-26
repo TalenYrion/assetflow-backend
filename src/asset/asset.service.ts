@@ -396,7 +396,6 @@ export class AssetService {
         'This seller is not onboarded to receive payments yet.',
       );
     }
-    await this.invalidateAssetCache(userId, assetId);
     return await this.orderService.createCheckoutSession(
       userId,
       assetId,
@@ -505,20 +504,23 @@ export class AssetService {
     return result;
   }
 
-  async invalidateAssetCache(userId: number, assetId?: number) {
-    // We include variations with and without the default 'cache:' prefix
-    // to ensure total compatibility with NestJS Cache Manager defaults
+async invalidateAssetCache(userId: number, assetId?: number) {
     const patterns = [
-      `creator:${userId}:*`,
-      `*asset/mine*`, // Catches /api/asset/mine with or without query params
-      `*asset/user/${userId}*`, // Catches user-specific asset listings
-      `*assets:*`,
-      `Profile:${userId}:*`,
+      `*creator:${userId}:*`,       // Added leading * for cache-manager prefixes
+      `*asset/mine*`,               // Catches Controller-level CacheInterceptor routes
+      `*asset/user/${userId}*`,     // Catches Controller-level CacheInterceptor routes
+      `*assets:*`,                  // Catches global findAll feed
+      `*Profile:${userId}:*`,       // Added leading * 
     ];
 
     if (assetId) {
-      patterns.push(`*asset/${assetId}*`); // Catches /api/asset/37, /asset/37?* etc.
-    } // Process patterns sequentially and wrap in Promises so NestJS waits for completion
+      // FIX: Use a colon to match the manual cacheKey from `findOne` -> `asset:123:user=456`
+      patterns.push(`*asset:${assetId}*`); 
+      
+      // Keep this only if you ALSO use @CacheKey or CacheInterceptor on routes like /api/asset/123
+      patterns.push(`*asset/${assetId}*`); 
+    } 
+
     for (const pattern of patterns) {
       await new Promise<void>((resolve, reject) => {
         const stream = this.redis.scanStream({
@@ -528,7 +530,7 @@ export class AssetService {
 
         stream.on('data', async (keys: string[]) => {
           if (keys.length > 0) {
-            console.log(`🔥 Actually deleting these keys from Redis:`, keys); // 👈 ADD THIS LOG
+            console.log(`🔥 Actually deleting these keys from Redis:`, keys);
             stream.pause();
             try {
               await this.redis.del(...keys);
@@ -536,7 +538,7 @@ export class AssetService {
               stream.destroy();
               return reject(err);
             }
-            stream.resume(); //  Fixed: Safely executed
+            stream.resume();
           }
         });
 
@@ -545,12 +547,9 @@ export class AssetService {
         });
 
         stream.on('end', () => {
-          console.log(
-            `Successfully evicted cache matching pattern: ${pattern}`,
-          );
+          console.log(`Successfully evicted cache matching pattern: ${pattern}`);
           resolve();
         });
       });
     }
-  }
-}
+  }}

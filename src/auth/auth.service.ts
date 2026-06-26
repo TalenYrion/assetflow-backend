@@ -8,6 +8,8 @@ import type { ConfigType } from '@nestjs/config';
 import { CurrentUser } from './types/currentUser';
 import { CreateUserDto } from 'src/user/dto/createUser.dto';
 import { Response } from 'express';
+import { REDIS_CLIENT } from 'src/redis/constants/redis.client';
+import Redis from 'ioredis';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +18,7 @@ export class AuthService {
     private jwtService: JwtService,
     @Inject(refreshConfig.KEY)
     private refreshTokenConfig: ConfigType<typeof refreshConfig>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   private setCookie(res: Response, accessToken: string, refreshToken: string) {
@@ -123,6 +126,10 @@ export class AuthService {
 
   async signOut(userId: number, res: Response) {
     this.clearCookies(res);
+    
+    // 🔥 Invalidate all cached records associated with the user when they log out
+    await this.invalidateUserCache(userId);
+
     return this.userService.deleteRefreshToken(userId);
   }
 
@@ -130,5 +137,51 @@ export class AuthService {
     const user = await this.userService.findByEmail(googleUser.email);
     if (user) return user;
     return await this.userService.createUser(googleUser);
+  }
+
+  // ==========================================
+  // NEW: Redis Invalidation logic for user data
+  // ==========================================
+  private async invalidateUserCache(userId: number) {
+    // Collects all known keys associated specifically with this user's ID
+    const patterns = [
+      `creator:${userId}:*`,                   // Creator listings/pagination
+      `Profile:${userId}:*`,                   // Public creator profiles
+      `buyer:order:history:id:${userId}:*`,    // Buyer purchase history
+      `sellerDashboard:id:${userId}:*`,        // Seller dashboard metrics
+      `asset:*:user=${userId}`,                // Individual assets viewed by this user
+    ];
+
+    for (const pattern of patterns) {
+      await new Promise<void>((resolve, reject) => {
+        const stream = this.redis.scanStream({
+          match: pattern,
+          count: 100,
+        });
+
+        stream.on('data', async (keys: string[]) => {
+          if (keys.length > 0) {
+            console.log(`🔥 Deleting cached keys for logged out User ${userId}:`, keys);
+            stream.pause();
+            try {
+              await this.redis.del(...keys);
+            } catch (err) {
+              stream.destroy();
+              return reject(err);
+            }
+            stream.resume();
+          }
+        });
+
+        stream.on('error', (err) => {
+          reject(err);
+        });
+
+        stream.on('end', () => {
+          console.log(`Successfully evicted cache matching pattern: ${pattern}`);
+          resolve();
+        });
+      });
+    }
   }
 }

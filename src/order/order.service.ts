@@ -135,7 +135,7 @@ export class OrderService {
       });
 
       await this.orderRepo.save(newOrder);
-
+      await this.invalidateAssetCache(buyerId, sellerId);
       console.log(
         `Successfully saved Order to DB for User ${buyerId} buying Asset ${assetId}`,
       );
@@ -153,10 +153,11 @@ export class OrderService {
           'Payment Intent ID missing from refund event',
         );
       }
-      console.log('payment_intentId: ', PaymentIntentId);
       const order = await this.orderRepo.findOne({
         where: { transactionId: PaymentIntentId },
-      });
+        relations: ['buyer', 'seller'], 
+      });      
+
       if (!order) {
         console.log(
           `[Webhook Warning] Order with transaction ID ${PaymentIntentId} not found for refund.`,
@@ -165,6 +166,11 @@ export class OrderService {
       }
 
       ((order.status = OrderStatus.REFUNDED), await this.orderRepo.save(order));
+
+ if (order.buyer?.id && order.seller?.id) {
+        await this.invalidateAssetCache(order.buyer.id, order.seller.id);
+      }
+
       console.log(
         `[Refund Success] Order #${order.id} has been marked as REFUNDED.`,
       );
@@ -269,7 +275,6 @@ export class OrderService {
       cancel_url: `${process.env.FRONTEND_URL}/browse`,
     });
 
-    await this.invalidateAssetCache(userId, sellerId);
 
     return { url: session.url }; // Return the checkout page URL
   }
@@ -320,7 +325,7 @@ export class OrderService {
       order: { createdAt: 'DESC' },
     });
     const result = { data, total };
-    await this.cacheManager.set(cacheKey, result, 30);
+    await this.cacheManager.set(cacheKey, result, 300000);
     return result;
   }
 
@@ -426,13 +431,10 @@ export class OrderService {
       );
     }
   }
-  async invalidateAssetCache(buyerId?: number, sellerId?: number) {
-    // We include variations with and without the default 'cache:' prefix
-    // to ensure total compatibility with NestJS Cache Manager defaults
-    const patterns = [
-      `buyer:order:history:id:${buyerId}`,
-      `sellerDashboard:id:${sellerId}`,
-    ];
+async invalidateAssetCache(buyerId?: number, sellerId?: number) {
+    const patterns: string[] = []
+    if (buyerId) {patterns.push(`*buyer:order:history:id:${buyerId}*`)}
+    if (sellerId) patterns.push(`*sellerDashboard:id:${sellerId}*`);
 
     for (const pattern of patterns) {
       await new Promise<void>((resolve, reject) => {
@@ -443,7 +445,7 @@ export class OrderService {
 
         stream.on('data', async (keys: string[]) => {
           if (keys.length > 0) {
-            console.log(`🔥 Actually deleting these keys from Redis:`, keys); // 👈 ADD THIS LOG
+            console.log(`🔥 Actually deleting these keys from Redis:`, keys);
             stream.pause();
             try {
               await this.redis.del(...keys);
@@ -451,7 +453,7 @@ export class OrderService {
               stream.destroy();
               return reject(err);
             }
-            stream.resume(); //  Fixed: Safely executed
+            stream.resume();
           }
         });
 
@@ -460,12 +462,9 @@ export class OrderService {
         });
 
         stream.on('end', () => {
-          console.log(
-            `Successfully evicted cache matching pattern: ${pattern}`,
-          );
+          console.log(`Successfully evicted cache matching pattern: ${pattern}`);
           resolve();
         });
       });
     }
-  }
-}
+  }}
