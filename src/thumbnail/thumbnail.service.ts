@@ -64,27 +64,24 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
     return newThumbnail;
   }
 
-  private extractVideoClip(videoBuffer: Buffer): Promise<Buffer> {
+private extractVideoClip(videoBuffer: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      // 1. Create a unique temporary file path in WSL/tmp
       const tempInputPath = path.join(os.tmpdir(), `input-${Date.now()}.mp4`);
       const tempOutputPath = path.join(os.tmpdir(), `output-${Date.now()}.gif`);
 
-      // 2. Write the video buffer to the temp file synchronously
       fs.writeFileSync(tempInputPath, videoBuffer);
 
-      // 3. Run FFmpeg directly on the file system to extract a 3-second animated GIF
       Ffmpeg(tempInputPath)
-        .seekInput('00:00:00.000') // Start at the beginning
-        .duration(3) // Capture a 3-second clip
+        .seekInput('00:00:00.000') 
+        .duration(3) 
+        // FIX: Separate flags and values into separate array elements
         .outputOptions([
-          '-vf fps=10,scale=320:-1:flags=lanczos', // 10 frames per sec, 320px width (maintaining aspect ratio)
-          '-loop 0'
+          '-vf', 'fps=10,scale=320:-1:flags=lanczos', 
+          '-loop', '0'
         ])
         .toFormat('gif')
         .output(tempOutputPath)
         .on('error', (err) => {
-          // Clean up input file if it fails
           if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
           reject(
             new BadRequestException(`FFmpeg process failed: ${err.message}`),
@@ -92,13 +89,11 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
         })
         .on('end', () => {
           try {
-            // 4. Read the generated GIF frame clip into a buffer
             if (!fs.existsSync(tempOutputPath)) {
               throw new Error('Output clip file was not generated.');
             }
             const frameBuffer = fs.readFileSync(tempOutputPath);
 
-            // 5. Clean up both temporary files completely
             fs.unlinkSync(tempInputPath);
             fs.unlinkSync(tempOutputPath);
 
@@ -111,10 +106,9 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
             );
           }
         })
-        .run(); // Explicitly trigger execution
+        .run(); 
     });
   }
-
   async createThumbFile(buffer: Buffer, userId: number, isAnimated: boolean = false) {
     // Pass { animated: true } to sharp if it's a video clip so it processes all frames into an animated WebP
     const thumbnailBuffer = await sharp(buffer, { animated: isAnimated })
@@ -150,7 +144,7 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
     await this.thumbnailRepo.delete(thumbId);
   }
 
-  async updateThumbEntity(
+async updateThumbEntity(
     id: number,
     file: Express.Multer.File | undefined,
     thumbnailFile: Express.Multer.File | undefined,
@@ -166,18 +160,16 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
     let thumnUrl: string = oldThumbnail.url;
     let thumbPath: string = oldThumbnail.storagePath;
 
-    // 1. Determine which thumbnail to generate based on hybrid priority
     if (thumbnailFile) {
-      // User explicitly uploaded a new cover image
       const webpBuffer = await this.generateCustomThumbBuffer(thumbnailFile);
       const result = await this.uploadToBucket(webpBuffer, userId);
       thumnUrl = result.thumnUrl;
       thumbPath = result.thumbPath;
     } else if (file) {
-      // User uploaded a new file without a cover image
       if (file.mimetype.startsWith('video/')) {
         const imageBuffer = await this.extractVideoClip(file.buffer);
-        const result = await this.createThumbFile(imageBuffer, userId); // Or reuse uploadToBucket if appropriate
+        // FIX: Added 'true' here to tell Sharp to preserve the animation!
+        const result = await this.createThumbFile(imageBuffer, userId, true); 
         thumnUrl = result.thumnUrl;
         thumbPath = result.thumbPath;
       } else if (file.mimetype.startsWith('image/')) {
@@ -185,7 +177,6 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
         thumnUrl = result.thumnUrl;
         thumbPath = result.thumbPath;
       } else {
-        // Fallback to data-driven SVG banner
         const webpBuffer = await this.generateDynamicThumbBuffer(
           title,
           extension,
@@ -195,11 +186,9 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
         thumbPath = result.thumbPath;
       }
     } else {
-      // No file or thumbnailFile uploaded, safely skip changes
       return oldThumbnail;
     }
 
-    // 2. Clean up old file from Supabase Bucket (if it changed)
     if (
       oldThumbnail.storagePath !== 'static-fallback' &&
       oldThumbnail.storagePath !== thumbPath
@@ -208,7 +197,6 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
       await supabase.storage.from(bucket).remove([oldThumbnail.storagePath]);
     }
 
-    // 3. Update existing DB Entity with the new paths
     await this.thumbnailRepo.update(
       { id },
       { url: thumnUrl, storagePath: thumbPath },
@@ -216,7 +204,6 @@ async createThumbnail(file: Express.Multer.File, userId: number) {
 
     return this.thumbnailRepo.findOne({ where: { id } });
   }
-
   private async uploadToBucket(
     buffer: Buffer,
     userId: number,

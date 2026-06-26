@@ -4,7 +4,6 @@ import { Asset } from 'src/entity/asset.entity';
 import { Repository } from 'typeorm';
 import { ThumbnailService } from './thumbnail.service';
 import { Job } from 'bullmq';
-import axios from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -44,22 +43,26 @@ export class ThumbnailProcessor extends WorkerHost {
 
       const videoBuffer = Buffer.from(await data.arrayBuffer());
 
-      const frameBuffer =
-        await this.thumbnailService['extractVideoFrame'](videoBuffer);
+      // 💡 FIX 1: Use the new 'extractVideoClip' method name
+      const clipBuffer =
+        await this.thumbnailService['extractVideoClip'](videoBuffer);
 
+      // 💡 FIX 2: Pass `true` as the third parameter to tell sharp it's an animated clip
       const { thumnUrl, thumbPath } =
-        await this.thumbnailService.createThumbFile(frameBuffer, userId);
+        await this.thumbnailService.createThumbFile(clipBuffer, userId, true);
 
       const newThumbnail = await this.thumbnailService['thumbnailRepo'].create({
         url: thumnUrl,
         storagePath: thumbPath,
       });
+      
       await this.thumbnailService['thumbnailRepo'].save(newThumbnail);
       await this.assetRepo.update(assetId, {
         thumbnail: newThumbnail,
       });
+      
       console.log(
-        `[Worker] Successfully attached thumbnail to Asset #${assetId}`,
+        `[Worker] Successfully attached animated thumbnail to Asset #${assetId}`,
       );
     } catch (err) {
       console.error(
