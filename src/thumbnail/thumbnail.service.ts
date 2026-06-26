@@ -35,10 +35,14 @@ export class ThumbnailService {
     this.supabase = createClient(url, key);
   }
 
-  async createThumbnail(file: Express.Multer.File, userId: number) {
+async createThumbnail(file: Express.Multer.File, userId: number) {
     let imageBuffer = file.buffer;
+    let isAnimated = false;
+
     if (file.mimetype.startsWith('video/')) {
-      imageBuffer = await this.extractVideoFrame(file.buffer);
+      // Use the new clip extractor
+      imageBuffer = await this.extractVideoClip(file.buffer);
+      isAnimated = true;
     } else if (!file.mimetype.startsWith('image/')) {
       throw new BadRequestException(
         'Unsupported file type for dynamic thumbnail',
@@ -48,7 +52,9 @@ export class ThumbnailService {
     const { thumbPath, thumnUrl } = await this.createThumbFile(
       imageBuffer,
       userId,
+      isAnimated
     );
+    
     const newThumbnail = await this.thumbnailRepo.create({
       url: thumnUrl,
       storagePath: thumbPath,
@@ -58,19 +64,24 @@ export class ThumbnailService {
     return newThumbnail;
   }
 
-  private extractVideoFrame(videoBuffer: Buffer): Promise<Buffer> {
+  private extractVideoClip(videoBuffer: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      // 1. Create a unique temporary file path in WSL
+      // 1. Create a unique temporary file path in WSL/tmp
       const tempInputPath = path.join(os.tmpdir(), `input-${Date.now()}.mp4`);
-      const tempOutputPath = path.join(os.tmpdir(), `output-${Date.now()}.jpg`);
+      const tempOutputPath = path.join(os.tmpdir(), `output-${Date.now()}.gif`);
 
       // 2. Write the video buffer to the temp file synchronously
       fs.writeFileSync(tempInputPath, videoBuffer);
 
-      // 3. Run FFmpeg directly on the file system
+      // 3. Run FFmpeg directly on the file system to extract a 3-second animated GIF
       Ffmpeg(tempInputPath)
-        .seekInput('00:00:01.000') // Capture frame at 1-second mark
-        .outputOptions(['-vframes 1', '-vcodec mjpeg'])
+        .seekInput('00:00:00.000') // Start at the beginning
+        .duration(3) // Capture a 3-second clip
+        .outputOptions([
+          '-vf fps=10,scale=320:-1:flags=lanczos', // 10 frames per sec, 320px width (maintaining aspect ratio)
+          '-loop 0'
+        ])
+        .toFormat('gif')
         .output(tempOutputPath)
         .on('error', (err) => {
           // Clean up input file if it fails
@@ -81,9 +92,9 @@ export class ThumbnailService {
         })
         .on('end', () => {
           try {
-            // 4. Read the generated frame into a buffer
+            // 4. Read the generated GIF frame clip into a buffer
             if (!fs.existsSync(tempOutputPath)) {
-              throw new Error('Output frame file was not generated.');
+              throw new Error('Output clip file was not generated.');
             }
             const frameBuffer = fs.readFileSync(tempOutputPath);
 
@@ -95,7 +106,7 @@ export class ThumbnailService {
           } catch (error) {
             reject(
               new BadRequestException(
-                `Failed to read extracted frame: ${error.message}`,
+                `Failed to read extracted clip: ${error.message}`,
               ),
             );
           }
@@ -103,8 +114,10 @@ export class ThumbnailService {
         .run(); // Explicitly trigger execution
     });
   }
-  async createThumbFile(buffer: Buffer, userId: number) {
-    const thumbnailBuffer = await sharp(buffer)
+
+  async createThumbFile(buffer: Buffer, userId: number, isAnimated: boolean = false) {
+    // Pass { animated: true } to sharp if it's a video clip so it processes all frames into an animated WebP
+    const thumbnailBuffer = await sharp(buffer, { animated: isAnimated })
       .resize(300, 300, { fit: 'cover' })
       .webp({ quality: 80 })
       .toBuffer();
@@ -119,12 +132,12 @@ export class ThumbnailService {
     const {
       data: { publicUrl: thumnUrl },
     } = this.supabase.storage.from(bucket).getPublicUrl(thumbPath);
+    
     return {
       thumnUrl,
       thumbPath,
     };
   }
-
   async deleteThumnFile(supabase: SupabaseClient, id: number) {
     const bucket = this.configService.get('supabase.thumbBucket');
     const thumbnail = await this.thumbnailRepo.findOne({ where: { id } });
@@ -163,7 +176,7 @@ export class ThumbnailService {
     } else if (file) {
       // User uploaded a new file without a cover image
       if (file.mimetype.startsWith('video/')) {
-        const imageBuffer = await this.extractVideoFrame(file.buffer);
+        const imageBuffer = await this.extractVideoClip(file.buffer);
         const result = await this.createThumbFile(imageBuffer, userId); // Or reuse uploadToBucket if appropriate
         thumnUrl = result.thumnUrl;
         thumbPath = result.thumbPath;
