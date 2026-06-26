@@ -23,6 +23,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+RUN apk add --no-cache fontconfig ttf-dejavu
+
 COPY package*.json ./
 
 # Copy pre-built folders directly

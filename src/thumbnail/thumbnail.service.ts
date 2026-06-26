@@ -234,6 +234,23 @@ async generateDynamicThumbBuffer(
     title: string,
     extension: string,
   ): Promise<Buffer> {
+    // Escape special characters to prevent invalid SVG XML
+    const escapeXml = (unsafe: string) => {
+      return unsafe.replace(/[<>&'"]/g, (c) => {
+        switch (c) {
+          case '<': return '&lt;';
+          case '>': return '&gt;';
+          case '&': return '&amp;';
+          case '\'': return '&apos;';
+          case '"': return '&quot;';
+          default: return c;
+        }
+      });
+    };
+
+    const safeTitle = escapeXml(title);
+    const displayTitle = safeTitle.length > 22 ? safeTitle.substring(0, 22) + '...' : safeTitle;
+
     // Generate a consistent but unique color scheme based on the title string
     const hash1 = Math.abs(title.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)) % 360;
     const hash2 = (hash1 + 45) % 360;
@@ -265,12 +282,15 @@ async generateDynamicThumbBuffer(
           <rect x="-400" y="-100" width="800" height="200" rx="30" fill="black" opacity="0.3" />
           <rect x="-400" y="-100" width="800" height="200" rx="30" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
           
-          <text y="-10" font-size="72" font-weight="900" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle" dominant-baseline="middle" filter="url(#glow)">
-            ${title.length > 22 ? title.substring(0, 22) + '...' : title}
+          <!-- FIX: Removed system-ui/-apple-system, replaced with standard local fonts -->
+          <text y="-10" font-size="72" font-weight="900" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle" filter="url(#glow)">
+            ${displayTitle}
           </text>
           
           <rect x="-120" y="45" width="240" height="50" rx="25" fill="rgba(255,255,255,0.1)" />
-          <text y="70" font-size="24" font-weight="bold" fill="#38bdf8" font-family="monospace" text-anchor="middle" dominant-baseline="middle" letter-spacing="4">
+          
+          <!-- FIX: Added standard monospace fallbacks -->
+          <text y="70" font-size="24" font-weight="bold" fill="#38bdf8" font-family="'Courier New', Courier, monospace" text-anchor="middle" dominant-baseline="middle" letter-spacing="4">
             .${extension.toUpperCase()}
           </text>
         </g>
