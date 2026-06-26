@@ -354,7 +354,7 @@ export class AssetService {
       order: { updateAT: 'DESC' },
     });
     const result = { data, total };
-    await this.cacheManager.set(cacheKey, result, 300000);
+    await this.cacheManager.set(cacheKey, result, 30);
 
     return result;
   }
